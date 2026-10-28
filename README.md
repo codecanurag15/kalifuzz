@@ -127,6 +127,8 @@ kalifuzz/
 ### Quick install (Kali / Debian)
 
 ```bash
+git clone https://github.com/codecanurag15/kalifuzz.git
+cd kalifuzz
 chmod +x install.sh
 ./install.sh
 ```
