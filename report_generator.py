@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""
+report_generator.py
+--------------------
+Builds a single, self-contained, dark-themed HTML report for a KaliFuzz
+scan. Reports are written by the caller into a fuzzing_reports/ folder.
+"""
+
+import html
+from datetime import datetime
+from typing import List
+
+STATUS_GROUP = {2: "s2xx", 3: "s3xx", 4: "s4xx", 5: "s5xx"}
+
+
+def _row(finding) -> str:
+    cls = STATUS_GROUP.get(finding.status_code // 100, "sother")
+    redirect = html.escape(finding.redirect_location) if finding.redirect_location else "&mdash;"
+    return f"""      <tr class="{cls}">
+        <td>{finding.status_code}</td>
+        <td><a href="{html.escape(finding.url)}" target="_blank" rel="noopener">{html.escape(finding.path)}</a></td>
+        <td>{finding.content_length}</td>
+        <td>{redirect}</td>
+        <td>{finding.depth}</td>
+      </tr>"""
+
+
+def generate_html_report(
+    path: str,
+    target: str,
+    findings: List,
+    wordlist: str,
+    threads: int,
+    elapsed: float,
+    total_requests: int,
+    extensions: List[str],
+) -> str:
+    rows = "\n".join(_row(f) for f in sorted(findings, key=lambda x: x.path))
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    counts = {}
+    for f in findings:
+        k = f"{f.status_code // 100}xx"
+        counts[k] = counts.get(k, 0) + 1
+    badges = " ".join(
+        f'<span class="badge {k}">{k.upper()}: {v}</span>' for k, v in sorted(counts.items())
+    )
+
+    doc = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KaliFuzz Report -- {html.escape(target)}</title>
+<style>
+  :root {{
+    --bg:#0b0f0c; --panel:#11170f; --green:#00ff41; --dim:#7fae7f;
+    --s2xx:#39d353; --s3xx:#e3c13b; --s4xx:#ff7b72; --s5xx:#ff4d4d; --border:#1f2a1d;
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    background: var(--bg); color:#d6ffd6; margin:0; padding:2rem 2.5rem;
+    font-family: 'Fira Code', 'Courier New', ui-monospace, monospace;
+  }}
+  h1 {{ color: var(--green); text-shadow: 0 0 10px rgba(0,255,65,.45); letter-spacing:1px; margin-bottom:.25rem; }}
+  .sub {{ color: var(--dim); margin-bottom:1.5rem; }}
+  .meta {{ color: var(--dim); margin-bottom:1.2rem; line-height:1.7; display:grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:.2rem 1.5rem; }}
+  .meta b {{ color:#cfe; }}
+  .badges {{ margin: 1rem 0 1.4rem; }}
+  .badge {{
+    display:inline-block; padding:.3rem .7rem; border-radius:4px; margin-right:.5rem;
+    font-weight:bold; font-size:.82rem; border:1px solid var(--border); background: var(--panel);
+  }}
+  .badge.s2xx {{ color: var(--s2xx); border-color: var(--s2xx); }}
+  .badge.s3xx {{ color: var(--s3xx); border-color: var(--s3xx); }}
+  .badge.s4xx {{ color: var(--s4xx); border-color: var(--s4xx); }}
+  .badge.s5xx {{ color: var(--s5xx); border-color: var(--s5xx); }}
+  table {{ width:100%; border-collapse: collapse; background: var(--panel);
+    border: 1px solid var(--border); border-radius:6px; overflow:hidden; }}
+  th, td {{ padding:.65rem .9rem; border-bottom:1px solid var(--border); text-align:left; font-size:.9rem; }}
+  th {{ color: var(--green); text-transform: uppercase; font-size:.72rem; letter-spacing:1.5px;
+    background:#0d130b; }}
+  tr.s2xx td:first-child {{ color: var(--s2xx); font-weight:bold; }}
+  tr.s3xx td:first-child {{ color: var(--s3xx); font-weight:bold; }}
+  tr.s4xx td:first-child {{ color: var(--s4xx); font-weight:bold; }}
+  tr.s5xx td:first-child {{ color: var(--s5xx); font-weight:bold; }}
+  a {{ color:#9fe6a0; text-decoration:none; }}
+  a:hover {{ text-decoration:underline; }}
+  tbody tr:hover {{ background:#152015; }}
+  .footer {{ margin-top:2rem; color:#4f6b4f; font-size:.78rem; border-top:1px dashed var(--border); padding-top:1rem; }}
+  .scroll {{ overflow-x:auto; }}
+</style>
+</head>
+<body>
+  <h1>&gt;_ KaliFuzz Scan Report</h1>
+  <div class="sub">Advanced directory &amp; file enumeration -- results below are reachable paths discovered on the target.</div>
+
+  <div class="meta">
+    <div><b>Target:</b> {html.escape(target)}</div>
+    <div><b>Scan date:</b> {ts}</div>
+    <div><b>Wordlist:</b> {html.escape(wordlist)}</div>
+    <div><b>Extensions:</b> {html.escape(', '.join(extensions)) if extensions else '(none)'}</div>
+    <div><b>Threads:</b> {threads}</div>
+    <div><b>Total requests:</b> {total_requests}</div>
+    <div><b>Elapsed:</b> {elapsed:.2f}s</div>
+    <div><b>Paths found:</b> {len(findings)}</div>
+  </div>
+
+  <div class="badges">{badges if badges else '<span class="badge">No results</span>'}</div>
+
+  <div class="scroll">
+  <table>
+    <thead>
+      <tr><th>Status</th><th>Path</th><th>Length (bytes)</th><th>Redirect</th><th>Depth</th></tr>
+    </thead>
+    <tbody>
+{rows if rows else '      <tr><td colspan="5">No paths found.</td></tr>'}
+    </tbody>
+  </table>
+  </div>
+
+  <div class="footer">Generated by KaliFuzz. For authorized security testing and learning only --
+  only scan systems you own or have explicit written permission to test.</div>
+</body>
+</html>"""
+
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(doc)
+    return path
